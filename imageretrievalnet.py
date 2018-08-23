@@ -12,7 +12,8 @@ import torchvision
 import pretrainedmodels
 from traindataset import myImageFloder
 from pooling import MAC, SPoC, RMAC, RAMAC
-
+from torchsummary import summary
+import datetime
 
 
 OUTPUT_DIM = {
@@ -49,27 +50,30 @@ class L2N(nn.Module):
         return self.__class__.__name__ + '(' + 'eps=' + str(self.eps) + ')'
 
 class ImageRetrievalNet(nn.Module):
-    
+#class imageretrievalnet(nn.Module):
     def __init__(self, features, meta):
         super(ImageRetrievalNet, self).__init__()
         self.features = nn.Sequential(*features)
         self.norm = L2N()
         self.meta = meta
+
     
     def forward(self, x):
         # features -> pool -> norm
-	x = self.features(x)
-	
+        x = self.features(x)
         feature_MAC = self.norm(MAC()(x)).squeeze(-1).squeeze(-1)
-	feature_SPoC = self.norm(SPoC()(x)).squeeze(-1).squeeze(-1)
-	feature_RMAC = self.norm(RMAC()(x)).squeeze(-1).squeeze(-1)
-	feature_RAMAC = self.norm(RAMAC()(x)).squeeze(-1).squeeze(-1)
+        feature_SPoC = self.norm(SPoC()(x)).squeeze(-1).squeeze(-1)
+        feature_RMAC = self.norm(RMAC()(x)).squeeze(-1).squeeze(-1)
+        feature_RAMAC = self.norm(RAMAC()(x)).squeeze(-1).squeeze(-1)
 
-        return feature_MAC.permute(1,0),feature_SPoC.permute(1,0),feature_RMAC.permute(1,0),feature_RAMAC.permute(1,0)
+        return x,feature_MAC,feature_SPoC,feature_RMAC,feature_RAMAC
+        #return x,feature_MAC.permute(1, 0), feature_SPoC.permute(1, 0), feature_RMAC.permute(1, 0), feature_RAMAC.permute(1, 0)
+
+
+
 
 
 def init_network(model='vgg16'):
-
     
     net_in = pretrainedmodels.__dict__[model](num_classes=1000, pretrained='imagenet')
     mean=net_in.mean
@@ -77,7 +81,8 @@ def init_network(model='vgg16'):
 
     if model.startswith('vgg'):
         net_in = getattr(torchvision.models, model)(pretrained=True)
-        features = list(list(net_in.children())[0][:-1])
+        #features = list(list(net_in.children())[0][:-1])
+        features = list(net_in.children())[0]
     elif model.startswith('resnet'):
         features = list(net_in.children())[:-2]
     elif model.startswith('resnext101_64x4d'):
@@ -105,35 +110,43 @@ def extract_vectors(net, images, image_size, print_freq=100):
     
     normalize = torchvision.transforms.Normalize(mean=net.meta['mean'], std=net.meta['std'])
     transform = torchvision.transforms.Compose([
+            torchvision.transforms.Resize((224,224)),
             torchvision.transforms.ToTensor(),
             normalize,
         ])
 
     # creating dataset loader
-    loader = torch.utils.data.DataLoader(
-    	myImageFloder(images, transform, imsize = image_size), batch_size = 1, shuffle = False, num_workers = 12)
+    batch_size=16
+    loader = torch.utils.data.DataLoader(myImageFloder(images, transform, imsize=image_size), batch_size=batch_size, shuffle=False, num_workers=12)
 
     # extracting vectors
-    vecs_MAC = torch.zeros(len(images), net.meta['outputdim'])
-    vecs_SPoC = torch.zeros(len(images), net.meta['outputdim'])
-    vecs_RMAC = torch.zeros(len(images), net.meta['outputdim'])
-    vecs_RAMAC = torch.zeros(len(images), net.meta['outputdim'])
     name_list = []
+    features=[]
+    macs=[]
+    rmacs=[]
+    spocs=[]
+    ramacs=[]
     for i, data in enumerate(loader):
-    	inputs, names = data
+        inputs, names = data
         input_var = Variable(inputs.cuda())
 
-        feature_MAC, feature_SPoC, feature_RMAC, feature_RAMAC = net(input_var)
+        feature,feature_MAC, feature_SPoC, feature_RMAC, feature_RAMAC = net(input_var)
 
-        vecs_MAC[i, :] = feature_MAC.cpu().data.squeeze()
-        vecs_SPoC[i, :] = feature_SPoC.cpu().data.squeeze()
-        vecs_RMAC[i, :] = feature_RMAC.cpu().data.squeeze()
-        vecs_RAMAC[i, :] = feature_RAMAC.cpu().data.squeeze()
+        features.append(feature.data.cpu())
+        macs.append(feature_MAC.data.cpu())
+        rmacs.append(feature_RMAC.data.cpu())
+        spocs.append(feature_SPoC.data.cpu())
+        ramacs.append(feature_RAMAC.data.cpu())
         name_list.extend(names)
 
 
         if (i+1) % print_freq == 0 or (i+1) == len(images):
-            print('\r>>>> {}/{} done...'.format((i+1), len(images)))
+           print('\r>>>> {}/{} done...'.format((i+1)*batch_size, len(images)))
 
-    return vecs_MAC, vecs_SPoC, vecs_RMAC, vecs_RAMAC, name_list
 
+
+    #torch.save(net,'extractor_model.pth')
+
+
+
+    return features,macs, rmacs, spocs, ramacs, name_list

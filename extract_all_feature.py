@@ -21,6 +21,7 @@ MODEL=['vgg16','resnet101', 'resnext101_64x4d', 'se_resnet101']
 def get_imlist(path):
     imlist = [os.path.join(path,f) for f in os.listdir(path) if f.endswith('.jpg')]
     imlist.sort()
+
     return imlist
 
 def main():
